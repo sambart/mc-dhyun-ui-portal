@@ -1,0 +1,234 @@
+buildscript {
+    repositories {
+        mavenCentral()
+        maven { url = 'https://maven.maxhenkel.de/repository/public' }
+        mavenLocal()
+    }
+    dependencies {
+        classpath group: 'de.maxhenkel.forge-update', name: 'forge-update', version: '1.0.4'
+    }
+}
+
+plugins {
+    id 'net.minecraftforge.gradle' version '5.+'
+    // https://github.com/matthewprenger/CurseGradle
+    id "com.matthewprenger.cursegradle" version "1.4.0"
+    id "com.github.johnrengelman.shadow" version "7.1.0"
+}
+
+apply plugin: 'net.minecraftforge.gradle'
+apply plugin: 'forge-update'
+apply plugin: 'com.modrinth.minotaur'
+
+archivesBaseName = project.archives_base_name
+version = mod_version
+group = mod_packagename
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(java_version as int)
+
+minecraft {
+    mappings channel: 'official', version: minecraft_version
+
+    runs {
+        all {
+            lazyToken('minecraft_classpath') {
+                configurations.shadow.copyRecursive().resolve().collect { it.absolutePath }.join(File.pathSeparator)
+            }
+            environment 'COMPATIBILITY_VERSION', mod_compatibility_version
+        }
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.console.level', 'debug'
+            args = ['--username', "henkelmax${new Random().nextInt(1000)}"]
+        }
+        server {
+            workingDirectory project.file('run/server').canonicalPath
+            property 'forge.logging.console.level', 'debug'
+            arg "--nogui"
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.maxhenkel.de/repository/public' }
+    mavenLocal()
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+configurations {
+    macos
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+
+    implementation(project(':common')) {
+        transitive false
+    }
+
+    implementation 'org.jetbrains:annotations:23.0.0'
+
+    implementation "de.maxhenkel.configbuilder:configbuilder:${configbuilder_version}"
+    shadow "de.maxhenkel.configbuilder:configbuilder:${configbuilder_version}"
+
+    implementation "de.maxhenkel.opus4j:opus4j:${opus4j_version}"
+    shadow "de.maxhenkel.opus4j:opus4j:${opus4j_version}"
+
+    implementation "org.concentus:Concentus:${concentus_version}"
+    shadow "org.concentus:Concentus:${concentus_version}"
+
+    implementation "de.maxhenkel.rnnoise4j:rnnoise4j:${rnnoise4j_version}"
+    shadow "de.maxhenkel.rnnoise4j:rnnoise4j:${rnnoise4j_version}"
+
+    implementation(project(path: ':macos', configuration: 'shadow')) {
+        transitive(false)
+    }
+    shadow(project(path: ':macos', configuration: 'shadow')) {
+        transitive(false)
+    }
+    macos(project(':macos')) {
+        transitive(false)
+    }
+
+    implementation(project(':api')) {
+        transitive false
+    }
+    shadow(project(':api')) {
+        transitive false
+    }
+}
+
+processResources {
+    filesMatching("**/*.toml") {
+        expand 'mod_id': mod_id,
+                'mod_version': mod_version,
+                'mod_name': mod_name,
+                'forge_loader_requirement': forge_loader_requirement,
+                'forge_requirement': forge_requirement,
+                'minecraft_version': minecraft_version
+    }
+    from("${project(':common').projectDir}/src/main/resources")
+
+    doLast {
+        copy {
+            from(configurations.macos) {
+                rename { 'macos.zip' }
+            }
+            into { "${buildDir}/resources/main" }
+        }
+    }
+}
+
+tasks.withType(JavaCompile) {
+    source(project(':common').sourceSets.main.allSource)
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+task prepareWorkspace {
+
+}
+
+jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes(["Specification-Title"     : mod_name,
+                    "Specification-Vendor"    : mod_vendor,
+                    "Specification-Version"   : "1",
+                    "Implementation-Title"    : mod_name,
+                    "Implementation-Version"  : mod_version,
+                    "Implementation-Vendor"   : mod_vendor,
+                    "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+                    "Compatibility-Version"   : mod_compatibility_version
+        ])
+    }
+    from configurations.shadow.collect { it.isDirectory() ? it : zipTree(it) }
+}
+
+task deobfJar(type: Jar) {
+    classifier 'deobf'
+    from sourceSets.main.output
+}
+
+curseforge {
+    apiKey = file("${rootDir}/curseforge_api_key.txt").exists() ? file("${rootDir}/curseforge_api_key.txt").text : ''
+    project {
+        id = curse_id
+        changelogType = 'markdown'
+        changelog = file("changelog.md")
+        releaseType = release_type
+        addGameVersion minecraft_version
+        addGameVersion 'Forge'
+        addGameVersion "Java ${java_version}"
+        mainArtifact(jar) {
+            displayName = "[FORGE][${minecraft_version}] ${mod_name} ${mod_version}"
+            relations {
+                optionalDependency 'sound-physics-remastered'
+            }
+        }
+    }
+}
+
+tasks.modrinth.configure({
+    group = 'upload'
+})
+
+modrinth {
+    token = file("${rootDir}/modrinth_token.txt").exists() ? file("${rootDir}/modrinth_token.txt").text : ''
+    projectId = modrinth_id
+    versionNumber = "forge-${mod_version}"
+    versionName = "[FORGE][${minecraft_version}] ${mod_name} ${mod_version}"
+    uploadFile = jar
+    versionType = release_type.toUpperCase()
+    changelog = file("changelog.md").text
+    gameVersions = [minecraft_version]
+    loaders = ['forge']
+}
+tasks.modrinth.dependsOn(build)
+
+forgeUpdate {
+    def messages = []
+    file("changelog.md").eachLine { String line ->
+        if (line.trim().startsWith('-')) {
+            messages.add(line.replaceFirst('-', '').trim())
+        }
+    }
+
+    serverURL = 'https://update.maxhenkel.de/'
+    apiKey = file("${rootDir}/forge_update_api_key.txt").exists() ? file("${rootDir}/forge_update_api_key.txt").text : ''
+    modID = mod_id
+    gameVersion = minecraft_version
+    modVersion = mod_version
+    updateMessages = messages
+    releaseType = release_type
+    tags = recommended == 'true' ? ['recommended'] : []
+}
+
+jar.finalizedBy('reobfJar')
+
+shadowJar {
+    configurations = [project.configurations.shadow]
+    classifier ''
+    relocate 'de.maxhenkel.configbuilder', "de.maxhenkel.${mod_id}.configbuilder"
+    relocate 'de.maxhenkel.opus4j', "de.maxhenkel.${mod_id}.opus4j"
+    relocate 'org.concentus', "de.maxhenkel.${mod_id}.concentus"
+    relocate 'de.maxhenkel.rnnoise4j', "de.maxhenkel.${mod_id}.rnnoise4j"
+    relocate 'com.dd.plist', "de.maxhenkel.${mod_id}.com.dd.plist"
+    dependencies {
+        exclude(dependency('net.java.dev.jna:jna'))
+        exclude(dependency('net.java.dev.jna:jna-platform'))
+        exclude(dependency('com.google.code.findbugs:jsr305'))
+    }
+}
+
+reobf {
+    shadowJar {}
+}
+
+artifacts {
+    archives deobfJar
+}

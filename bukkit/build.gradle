@@ -1,0 +1,151 @@
+buildscript {
+    repositories {
+        maven { url = "https://repo.u-team.info" }
+    }
+    dependencies {
+        classpath "info.u-team.curse_gradle_uploader:curse_gradle_uploader:1.5.1"
+    }
+}
+
+plugins {
+    id 'java'
+    id "com.github.johnrengelman.shadow" version "7.1.0"
+}
+
+apply plugin: "info.u_team.curse_gradle_uploader"
+
+sourceCompatibility = JavaLanguageVersion.of(java_version as int)
+targetCompatibility = JavaLanguageVersion.of(java_version as int)
+
+archivesBaseName = archives_base_name
+version = mod_version
+group = maven_group
+
+processResources {
+    filesMatching("plugin.yml") {
+        expand "version": version,
+                "bukkit_api_version": bukkit_api_version
+    }
+}
+
+dependencies {
+    implementation 'com.google.code.findbugs:jsr305:3.0.2'
+    implementation "org.bukkit:craftbukkit:${bukkit_version}"
+
+    implementation "net.kyori:adventure-api:${adventure_api_version}"
+    shadow "net.kyori:adventure-api:${adventure_api_version}"
+    implementation "net.kyori:adventure-text-serializer-gson:${adventure_api_version}"
+    shadow "net.kyori:adventure-text-serializer-gson:${adventure_api_version}"
+    implementation "me.lucko:commodore:${commodore_version}"
+    shadow "me.lucko:commodore:${commodore_version}"
+
+    implementation "de.maxhenkel.configbuilder:configbuilder:${configbuilder_version}"
+    shadow "de.maxhenkel.configbuilder:configbuilder:${configbuilder_version}"
+
+    implementation "org.concentus:Concentus:${concentus_version}"
+    shadow "org.concentus:Concentus:${concentus_version}"
+
+    compileOnly "me.clip:placeholderapi:${placeholder_api_version}"
+
+    implementation project(':api')
+    shadow project(':api')
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven { url "https://papermc.io/repo/repository/maven-public/" }
+    maven { url "https://libraries.minecraft.net/" }
+    maven {
+        name = "henkelmax.public"
+        url = 'https://maven.maxhenkel.de/repository/public'
+    }
+    maven {
+        name = "placeholderapi"
+        url = 'https://repo.extendedclip.com/content/repositories/placeholderapi/'
+    }
+}
+
+jar {
+    manifest {
+        attributes([
+                "Compatibility-Version": mod_compatibility_version,
+                "Target-Bukkit-Version": target_bukkit_version
+        ])
+    }
+}
+
+task copyJarToServer {
+    doLast {
+        delete {
+            delete "${projectDir}/run/plugins/${archivesBaseName}-${version}.jar"
+        }
+        copy {
+            from "${buildDir}/libs/${archivesBaseName}-${version}.jar"
+            into "${projectDir}/run/plugins"
+        }
+    }
+}
+
+build.finalizedBy(copyJarToServer)
+
+task runServer {
+    doLast {
+        javaexec {
+            debug = true
+            workingDir = "${projectDir}/run"
+            main = "-jar";
+            args = [
+                    "${projectDir}/run/craftbukkit.jar",
+                    "nogui"
+            ]
+        }
+    }
+}
+
+task runPaperServer {
+    doLast {
+        javaexec {
+            debug = true
+            workingDir = "${projectDir}/run"
+            main = "-jar";
+            args = [
+                    "${projectDir}/run/paper.jar",
+                    "nogui"
+            ]
+        }
+    }
+}
+
+build.dependsOn(shadowJar)
+runServer.dependsOn(build)
+runPaperServer.dependsOn(build)
+
+shadowJar {
+    configurations = [project.configurations.shadow]
+    classifier ''
+    relocate 'net.kyori', "de.maxhenkel.voicechat.net.kyori"
+    relocate 'com.google.gson', "de.maxhenkel.voicechat.gson"
+    relocate 'me.lucko.commodore', "de.maxhenkel.voicechat.commodore"
+    relocate 'de.maxhenkel.configbuilder', "de.maxhenkel.voicechat.configbuilder"
+    relocate 'org.concentus', "de.maxhenkel.voicechat.concentus"
+    dependencies {
+        exclude(dependency('com.mojang:brigadier:.*'))
+        exclude(dependency('com.google.code.findbugs:jsr305:.*'))
+    }
+}
+
+curseforge {
+    apiBaseUrl = "https://dev.bukkit.org"
+    apiKey = file("${rootDir}/curseforge_api_key.txt").exists() ? file("${rootDir}/curseforge_api_key.txt").text : ''
+    project {
+        id = curse_id
+        changelogType = 'markdown'
+        changelog = file("changelog.md")
+        releaseType = release_type
+        addGameVersion curseforge_minecraft_version
+        mainArtifact(shadowJar) {
+            displayName = "[BUKKIT/SPIGOT/PAPER][${minecraft_version}] ${mod_name} ${mod_version}"
+        }
+    }
+}
